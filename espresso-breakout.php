@@ -31,6 +31,7 @@ function espresso_breakouts_version() {
 
 define( 'EE_BREAKOUTS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'EE_BREAKOUTS_URL', plugin_dir_url( __FILE__ ) );
+define( 'EE_BREAKOUTS_TEMPLATE_PATH', EE_BREAKOUTS_PATH . 'templates/' );
 
 require_once EE_BREAKOUTS_PATH . 'EE_Breakouts_Main.class.php';
 $EE_BRK_MAIN = new EE_Breakouts_Main();
