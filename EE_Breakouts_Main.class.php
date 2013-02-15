@@ -235,9 +235,9 @@ class EE_Breakouts_Main {
 
 	private function _set_page_routes() {
 		$this->_page_routes = array(
-			'default' => '_load_transaction_form',
-			'transaction_verify' => array(
-				'func' => '_verify_transaction_id',
+			'default' => '_load_registration_check_form',
+			'registration_verify' => array(
+				'func' => '_verify_registration_id',
 				'noheader' => TRUE
 				),
 			'breakout_info' => '_display_breakouts',
@@ -258,7 +258,6 @@ class EE_Breakouts_Main {
 
 
 	private function _route_request() {
-		$this->_verify_routes();
 
 		//nonce check (but only when not on default);
 		if ( $this->_route != 'default' ) {
@@ -266,12 +265,19 @@ class EE_Breakouts_Main {
 			if ( !wp_verify_nonce( $nonce, $this->_req_nonce ) ) {
 				wp_die( sprintf(__('%sNonce Fail.%s' , 'event_espresso'), '<a href="http://www.youtube.com/watch?v=56_S0WeTkzs">', '</a>' ) );
 			}
+
+			//we also check if valid registration access has been set in the session
+			if ( !isset( $this->_session['registration_valid'] ) )
+				wp_die( sprintf( __('<strong>Invalid Session</strong> This page cannot be accessed without a valid registration id entered', 'event_espresso') ) );
 		}
+
+		//made it here so let's do the route
+		$this->_do_route();
 	}
 
 
 
-	private function _verify_routes() {
+	private function _do_route() {
 		$func = FALSE;
 		$args = array();
 
@@ -291,7 +297,6 @@ class EE_Breakouts_Main {
 		} else {
 			$func = $this->_page_routes[$this->_route];
 		}
-
 
 		if ( $func ) {
 			// and finally,  try to access page route
@@ -324,23 +329,24 @@ class EE_Breakouts_Main {
 		if ( !isset( $_SESSION['espresso_breakout_session']['id'] ) || empty( $_SESSION['espresso_breakout_session']['id'] ) ) {
 			$_SESSION['espresso_breakout_session'] = array();
 			$_SESSION['espresso_breakout_session']['id'] = session_id() . '-' . uniqid('', true);
+			$_SESSION['espresso_breakout_session']['registration_valid'] = FALSE;
 		}
 		
-		$this->_session = $_SESSION;
+		$this->_session = $_SESSION['espresso_breakout_session'];
 	}
 
 
 	/** ROUTE HANDLING **/
 
 	//todo: finish filling out these methods.
-	private function _load_transaction_form() {
+	private function _load_registration_check_form() {
 		$this->_set_form_tags();
 
-		$this->_set_submit( __('Go', 'event_espresso' ), 'transaction_verify' );
+		$this->_set_submit( __('Go', 'event_espresso' ), 'registration_verify' );
 
 		//set up fields
-		$form_fields['ee_breakout_transaction_id'] = array(
-			'label' => __('Transaction ID', 'event_espresso'),
+		$form_fields['ee_breakout_registration_id'] = array(
+			'label' => __('Registration ID', 'event_espresso'),
 			'extra_desc' => __('Enter in the transaction ID for the main event registration', 'event_espresso'),
 			'type' => 'text',
 			'class' => 'normal-text-field'
@@ -353,9 +359,94 @@ class EE_Breakouts_Main {
 	}
 
 
-	private function _verify_transaction_id() {}
-	private function _display_breakouts() {}
-	private function _display_breakout_registration() {}
+
+	/**
+	 * verifies the entered registration id and if it is valid then we set continue the session and go to the breakout registration form.	
+	 *
+	 * @access private
+	 * @return void
+	 */
+	private function _verify_registration_id() {
+		$success = TRUE;
+		if ( !isset( $this->_req_data['ee_breakout_registration_id']) ) {
+			$msg = __('There is no value for the registration id check.  Something went wrong', 'event_espresso');
+			EE_Error::add_error( $msg, __FILE__, __FUNCTION__, __LINE__ );
+			$route = 'default';
+			$success = FALSE;
+		} else {
+			//check that the registration id exists in the database!
+			$quantity = $this->_check_reg_id( $this->_req_data['ee_breakout_registration_id'] );
+
+			//pass or fail?
+			if ( !$quantity ) {
+				EE_Error::add_error( __('Sorry but the registration id you entered is invalid. Please doublecheck and make sure you are entering it correctly', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
+				$route = 'default'; 
+				$success = FALSE;
+			}
+
+			//made it here. Let's just quickly set the session for registration id
+			$this->_session['registration_id'] = $this->_req_data['ee_breakout_registration_id'];
+
+			//we pass. but we also need to verify that the count of people who have already registered using this registration id has not been exceeded. 
+			$can_register = $this->_check_reg_count( $quantity );
+
+			if ( !$can_register ) {
+				EE_Error::add_error( __('Sorry, although your registration id is valid. The purchased tickets attached to that id have all been registered for breakout sessions. If you feel this is in error, please contact us.', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
+				$route = 'default';
+				$success = FALSE;
+			}
+
+			//hey made it here so let's set the route and continue!
+			EE_Error::add_success( __('Your registration ID is validated, please make your selections for the breakout sessions using this form and then submit to register.', 'event_espresso') );
+			$route = 'breakout_info';
+
+			//let's make sure that we set the valid session item
+			$this->_session['registration_valid'] = TRUE;
+		}
+
+		//if there's an error then we can clear the session and it can be reset on reload.
+		if ( !$success )
+			$this->_clear_session();
+
+		$this->_redirect_page($route);
+	}
+
+
+
+
+
+	/**
+	 * This displays the breakout details.
+	 *
+	 * @todo: we're not going to do this page initially.  It can be added later. For now we'll just load the _display_breakout_registration.
+	 *
+	 * @access private
+	 * @return void
+	 */
+	private function _display_breakouts() {
+		$this->_route = 'breakout_registration';
+		$this->_display_breakout_registration();
+	}
+
+
+
+
+	/**
+	 * This displays the breakout registration form
+	 * NOTE: we're just going to collect basic info on the breakout registration and for now this is not customizable.
+	 *
+	 * @access private
+	 * @return string html form for breakout registration.
+	 */
+	private function _display_breakout_registration() {
+
+		//todo left off here
+		
+	}
+
+
+
+
 	private function _process_breakout_registration() {}
 	private function _breakout_finished() {}
 
@@ -363,7 +454,19 @@ class EE_Breakouts_Main {
 
 
 	/** TEMPLATING / HELPERS **/
-	private function _clear_session() {}
+
+	/**
+	 * This takes care of clearing the ee_breakouts session
+	 *
+	 * @access private
+	 * @return void 
+	 */
+	private function _clear_session() {
+		if ( isset( $_SESSION['espresso_breakout_session'] ) ) {
+			unset( $_SESSION['espresso_breakout_session'] );
+			$this->_session = NULL;
+		}
+	}
 
 
 	/**
@@ -479,6 +582,7 @@ class EE_Breakouts_Main {
 	private function _set_content() {
 
 		$template_path = EE_BREAKOUTS_TEMPLATE_PATH . 'ee-breakouts-main-wrapper.template.php';
+		$this->_template_args['notices'] = EE_Error::get_notices();
 		$this->_content = $this->_display_template( $template_path, $this->_template_args );
 
 	}
@@ -526,15 +630,77 @@ class EE_Breakouts_Main {
 
 
 
-	private function _redirect_page() {
-		if ( !isset( $this->_req_data['ee_breakout_redirect'] ) )
+	private function _redirect_page( $route = FALSE ) {
+		if ( !isset( $this->_req_data['ee_breakout_redirect'] ) && !$route )
 			wp_die( __('Something went wrong with a redirect. Please contact support', 'event_espresso' ) );
 
-		$redirect_url = $this->_req_data['ee_breakout_redirect'];
+		//if we have notices let's include them
+		$notices = EE_Error::get_notices();
+
+		// if we have a given route then let's setup the url for it
+		if ( $route ) {
+			$redirect_url = wp_nonce_url( add_query_arg( array('route' => $route, 'notices' => $notices ) ), $route . '_nonce' );
+		}
+		$redirect_url = $route ? $redirect_url : $this->_req_data['ee_breakout_redirect'];
+
+		$this->_update_session();
+
 		wp_safe_redirect( $redirect_url );
 		exit();
 	}
 
 
+
+	/**
+	 * The purpose of this method is just to update the $_SESSION with any details that may have been added in the current route process
+	 *
+	 * @access private
+	 * @return void
+	 */
+	private function _update_session() {
+		$_SESSION['espresso_breakout_session'] = $this->_session;
+	}
+
+
+	
+
+	/**
+	 * This will just return a boolean depending on whether the given reg id is in the database or not.
+	 *
+	 * Note we are not only checking that the registration id matches one in the system but it also matches a registration attached to the MAIN event (set in the admin)!!
+	 *
+	 * @access private
+	 * @param int $reg_id  The reg id to check. 
+	 * @return mixed (bool|int) if false no match, otherwise we'll return the number of attendees registered with the id.
+	 */
+	private function _check_reg_id($reg_id) {
+		global $wpdb;
+		$main_event_id = $this->_settings['breakout_main_event'];
+		$sql = "SELECT e.quantity FROM " . EVENTS_ATTENDEE_TABLE . " AS e WHERE e.registration_id = %s AND e.event_id = %s";
+		$quantity = $wpdb->get_var( $wpdb->prepare( $sql, $reg_id, $main_event_id ) );
+
+		if ( (int) $quantity > 0 ) 
+			return $quantity;
+		else 
+			return FALSE;
+	}
+
+
+
+	/**
+	 * This just checks the quantity of tickets attached to the main event registration id against the total of people who have ALREADY registered with that id and returns a boolean to indicate whether to continue things or not.
+	 * @param  int $quantity quantity already retrieved for the current person registering
+	 * @return bool           TRUE = okey dokey, FALSE = no go
+	 */
+	private function _check_reg_count( $quantity ) {
+		//any registered already?
+		$reg_count = (int) get_option( $this->_session['registration_id'] . '_breakout_count' );
+
+		$happy = $quantity - $reg_count;
+		if ( !$happy || $happy === '0' ) 
+			return FALSE;
+
+		return TRUE;
+	}
 
 }

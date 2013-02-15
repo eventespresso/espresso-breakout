@@ -230,17 +230,16 @@ class EE_Form_Fields {
 					break;
 					
 				case 'checkbox' :
-						$c_input = '';
 						$default = (array) $default;
 						if ( is_array($value) ) {
 							foreach ( $value as $key => $val ) {
-								$c_id = $field_name . '_' . $value;
+								$c_id = $field_name . '_' . $val;
+								$lab = isset( $labels[$key] ) ? $labels[$key] : '';
 								$c_class = isset($classes[$key]) ? ' class="' . $classes[$key] . '" ' : '';
-								$c_label = isset($labels[$key]) ? '<label for="' . $c_id . '">' . $labels[$key] . '</label>' : '';
+								$label[] = $lab;
 								$checked = !empty($default) && in_array( $val, $default ) ? ' checked="checked" ' : '';
-								$c_input .= '<input name="' . $f_name . '[]" type="checkbox" id="' . $c_id . '"' . $c_class . 'value="' . $val . '"' . $checked . ' />' . "\n" . $c_label;
+								$fld[] = '<label for=" ' .$c_id . '"><input name="' . $f_name . '[]" type="checkbox" id="' . $c_id . '"' . $c_class . 'value="' . $val . '"' . $checked . ' />' . ' ' . $lab . '</label>' . "\n";
 							}
-							$fld = $c_input;
 						} else {
 							$checked = !empty($default) && $default == $val ? 'checked="checked" ' : '';
 							$fld = '<input name="'. $f_name . '" type="checkbox" id="' . $id . '" class="' . $class . '" value="' . $value . '"' . $checked . ' />' . "\n";
@@ -325,7 +324,7 @@ class EE_Form_Fields {
 	static public function select_input($name, $values, $default = '', $parameters = '', $class = '', $autosize = true) {
 
 		//load formatter helper
-		require_once EVENT_ESPRESSO_PLUGINFULLPATH . '/helpers/EE_Formatter.helper.php';
+		require_once EE_BREAKOUTS_PATH . '/helpers/EE_Formatter.helper.php';
 
 		$field = '<select name="' . EE_Formatter::ee_tep_output_string($name) . '"';
 		//Debug
