@@ -107,8 +107,43 @@ class EE_Breakouts_Admin {
 		$newinput['breakout_categories'] = array_map( 'absint', $input['breakout_categories'] );
 		$newinput['breakout_main_event'] = (int) $input['breakout_main_event'];
 
-		//todo we need to go through the list of saved breakout categories, retrieve the attendee limit for each event assigned to that category and then save that limit somehow in the database reffed by category/event.  That way if an event is assigned to more than one category the limits will be saved PER category.  Or maybe this would be done on registration (which might be the best place to do it).
+		$this->_check_breakout_session_price_setup( $newinput['breakout_page'] );
+
+		
 		return $newinput;
+	}
+
+
+
+	/**
+	 * This just checks to see if we have a "Breakout Session" price type setup for Breakout sessions.  If we don't, then we create it.  If we do then we'll just use whatever is set.
+	 * @return void
+	 */
+	private function _check_breakout_session_price_setup( $event_id ) {
+		global $wpdb;
+
+		//check to see if we have a "Breakout Session" price type setup.  If not then let's do it.
+		$sql = "SELECT p.price_type FROM " . EVENTS_PRICES_TABLE . " AS p WHERE p.price_type = %s";
+		$results = $wpdb->get_var( $wpdb->prepare( $sql, 'Breakout Session' ) );
+
+		if ( empty( $results ) ) {
+			//no Breakout session setup. Let's do this!
+			$cols_and_vals = array(
+				'event_id' => $event_id,
+				'price_type' => 'Breakout Session',
+				'event_cost' => 0.00,
+				'surcharge' => 0.00,
+				'surcharge_type' => 'flat_rate',
+				'member_price' => 0.00,
+				'member_price_type' => 'Members Admission',
+				'max_qty' => 0,
+				'max_qty_members' => 0,
+				);
+			$data_formats = array( '%d', '%s', '%f', '%f', '%s', '%f', '%s', '%d', '%d' );
+			if ( !$wpdb->insert( EVENTS_PRICES_TABLE, $cols_and_vals, $data_formats )) {
+				$error = sprintf( __('An error occured. "Breakout Session" price type not saved for Event with ID: %d','event_espresso'), $event_id );
+			}
+		}
 	}
 	
 
