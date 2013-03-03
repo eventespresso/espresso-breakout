@@ -91,6 +91,15 @@ class EE_Breakouts_Main {
 
 
 
+	/**
+	 * This just holds any transient data passed between routes
+	 * @var array
+	 */
+	private $_route_transient = array();
+
+
+
+
 
 	/**
 	 * This simply lets us know if we're loading a UI or not.
@@ -146,12 +155,6 @@ class EE_Breakouts_Main {
 
 
 
-
-	/**
-	 * holds the nonce ref for the current route.
-	 * @var string
-	 */
-	private $_req_nonce = '';
 	
 
 
@@ -169,11 +172,9 @@ class EE_Breakouts_Main {
 		if ( empty( $this->_settings ) || ( isset($_REQUEST['page_id'] ) && $_REQUEST['page_id'] != $this->_breakout_page ) ) 
 			return; //getout no settings or we aren't on a breakout page.
 
-
-		$this->_init(); //run all hooks that run on load.
 		$this->_set_page_routes();
-
-		//todo: remember that for route requests, any UI elements get saved to a var on page load.  Then THAT var gets parsed by the shortcode and displayed.  
+		$this->_init(); //run all hooks that run on load.
+		
 
 		$this->_route_request();
 
@@ -226,8 +227,19 @@ class EE_Breakouts_Main {
 
 
 	private function _init() {
-		add_action('init', array( $this, 'start_session' ) );
+		$this->_start_session();
 		add_shortcode( 'EE_BREAKOUTS', array( $this, 'parse_shortcode' ) );
+		add_action( 'wp_enqueue_scripts', array($this, 'frontend_styles_scripts' ), 10 );
+	}
+
+
+
+
+
+	public function frontend_styles_scripts() {
+		//styles
+		wp_register_style( 'ee-breakouts-main', EE_BREAKOUTS_URL . 'assets/ee-breakouts-main.css', array(), EE_BREAKOUTS_VERSION );
+		wp_enqueue_style( 'ee-breakouts-main' );
 	}
 
 
@@ -251,7 +263,6 @@ class EE_Breakouts_Main {
 
 		//set the current route
 		$this->_route = isset( $this->_req_data['route'] ) ? $this->_req_data['route'] : 'default';
-		$this->_req_nonce = $this->_route . '_nonce';
 	}
 
 
@@ -259,16 +270,22 @@ class EE_Breakouts_Main {
 
 	private function _route_request() {
 
-		//nonce check (but only when not on default);
-		if ( $this->_route != 'default' ) {
-			$nonce = isset( $this->_req_data['_wpnonce'] ) ? $this->_req_data['_wpnonce'] : '';
-			if ( !wp_verify_nonce( $nonce, $this->_req_nonce ) ) {
-				wp_die( sprintf(__('%sNonce Fail.%s' , 'event_espresso'), '<a href="http://www.youtube.com/watch?v=56_S0WeTkzs">', '</a>' ) );
-			}
+		//session check but only when on default or registration verify
+		if ( $this->_route != 'default' && $this->_route != 'registration_verify' ) {
 
 			//we also check if valid registration access has been set in the session
-			if ( !isset( $this->_session['registration_valid'] ) )
-				wp_die( sprintf( __('<strong>Invalid Session</strong> This page cannot be accessed without a valid registration id entered', 'event_espresso') ) );
+			if ( ! $this->_session['registration_valid'] ) {
+				wp_die( sprintf( __('<strong>Invalid Session</strong> This page cannot be accessed without a valid registration id entered. %sClick Here to start over%s', 'event_espresso'), '<a href="' . $this->_breakout_url . '">', '</a>' ), __('Error', 'event_espresso' ) );
+			}
+
+		}
+
+		//do a check prevent refreshes on page routes (and duplicate registrations);
+		if ( $this->_session['espresso_breakout_session']['visited'] ) {
+			wp_die( sprintf( __('<strong>Invalid Page Load</strong> It looks like you hit the back key or tried to refresh the page. To prevent possible duplicate registrations for breakout sessions, we have error controls in place.  You\'ll need to start again by %sclicking this link%s.', 'event_espresso'), '<a href="' . $this->_breakout_url . '">', '</a>' ), __('Error', 'event_espresso' ) );
+		} else {
+			$this->_session['espresso_breakout_session']['visited'] = $this->_route;
+			$this->_update_session();
 		}
 
 		//made it here so let's do the route
@@ -283,7 +300,7 @@ class EE_Breakouts_Main {
 
 		//check that the requested page route exists
 		if ( !array_key_exists( $this->_route, $this->_page_routes ) ) {
-			wp_die(__('Sorry, but the url you are trying to access is not correct', 'event_espresso') ); //todo: proper error handling.
+			wp_die(__('Sorry, but the url you are trying to access is not correct', 'event_espresso') ); 
 		}
 
 		//let's set is_UI based on what is in the route array.
@@ -305,7 +322,7 @@ class EE_Breakouts_Main {
 				$error_msg =  __( 'An error occured. The  requested page route could not be found. Please notify support.', 'event_espresso' );
 				// developer error msg
 				$error_msg .= '||' . sprintf( __( 'Page route "%s" could not be called. Check that the spelling for method names and actions in the "_page_routes" array are all correct.', 'event_espresso' ), $func );
-				wp_die ( $error_msg ); //todo proper error handling.
+				wp_die( $error_msg ); 
 			}
 		}
 	}
@@ -318,37 +335,58 @@ class EE_Breakouts_Main {
 	 * @access public
 	 * @return void 
 	 */
-	public function start_session() {
+	private function _start_session() {
 
 		//first let's see if the user has not been active, we'll give them one hour.  If they are inactive after one hour then we remove their session.
 		$this->_check_auto_end_session();
 
+		$this->_session = isset($_SESSION['espresso_breakout_session']) ? $_SESSION['espresso_breakout_session'] : array();
+
+		
+		//only do this if _session isn't empty
+		if ( !empty($this->_session ) ) {
+			//we always get notices first (and any transient data).. then if this is default route we clear the session because default ALWAYS clears session
+			$this->_template_args['notices'] = $this->_display_notices();
+			$this->_route_transient = $this->_get_transient();
+
+
+			if ( $this->_route == 'default' ) {
+				$this->_clear_session();
+			}
+		}
+		
 
 		//check to make sure we don't already have a session.  If we don't then init vars.
 		if ( !isset( $_SESSION['espresso_breakout_session']['id'] ) || empty( $_SESSION['espresso_breakout_session']['id'] ) ) {
 			$_SESSION['espresso_breakout_session'] = array();
 			$_SESSION['espresso_breakout_session']['id'] = session_id() . '-' . uniqid('', true);
+			$_SESSION['espresso_breakout_session']['transient_id'] = uniqid();
 			$_SESSION['espresso_breakout_session']['registration_valid'] = FALSE;
+			$_SESSION['espresso_breakout_session']['expiry'] = time();
 		}
 		
 		$this->_session = $_SESSION['espresso_breakout_session'];
+		$this->_session['espresso_breakout_session']['visited'] = isset($this->_session['espresso_breakout_session']['visited']) && $this->_session['espresso_breakout_session']['visited'] == $this->_route ? TRUE : FALSE;
 	}
 
 
 	/** ROUTE HANDLING **/
 
-	//todo: finish filling out these methods.
 	private function _load_registration_check_form() {
-		$this->_set_form_tags();
+		$this->_set_form_tags( array( 'query_args' => array('route' => 'registration_verify' ) ) );
+
+		//chck if we've got any transported data from a previous session
+		$data = $this->_route_transient;
 
 		$this->_set_submit( __('Go', 'event_espresso' ), 'registration_verify' );
 
 		//set up fields
 		$form_fields['ee_breakout_registration_id'] = array(
 			'label' => __('Registration ID', 'event_espresso'),
-			'extra_desc' => __('Enter in the transaction ID for the main event registration', 'event_espresso'),
+			'extra_desc' => '<br /><span class="description">' . __('Enter in the transaction ID for the main event registration', 'event_espresso') . '</span><br />',
 			'type' => 'text',
-			'class' => 'normal-text-field'
+			'class' => 'normal-text-field',
+			'value' => isset( $data['registration_id'] ) ? $data['registration_id'] : ''
 			);
 
 		$this->_form_fields($form_fields);
@@ -367,8 +405,8 @@ class EE_Breakouts_Main {
 	 */
 	private function _verify_registration_id() {
 		$success = TRUE;
-		if ( !isset( $this->_req_data['ee_breakout_registration_id']) ) {
-			$msg = __('There is no value for the registration id check.  Something went wrong', 'event_espresso');
+		if ( empty( $this->_req_data['ee_breakout_registration_id']) ) {
+			$msg = __('There is no value for the registration id check.  Something went wrong. Are you SURE you entered something in the field?', 'event_espresso');
 			EE_Error::add_error( $msg, __FILE__, __FUNCTION__, __LINE__ );
 			$route = 'default';
 			$success = FALSE;
@@ -383,29 +421,35 @@ class EE_Breakouts_Main {
 				$success = FALSE;
 			}
 
-			//made it here. Let's just quickly set the session for registration id
-			$this->_session['registration_id'] = $this->_req_data['ee_breakout_registration_id'];
+			if ( $success ) {
+				//made it here. Let's just quickly set the session for registration id
+				$this->_session['registration_id'] = $this->_req_data['ee_breakout_registration_id'];
 
-			//we pass. but we also need to verify that the count of people who have already registered using this registration id has not been exceeded. 
-			$can_register = $this->_check_reg_count( $quantity );
+				//we pass. but we also need to verify that the count of people who have already registered using this registration id has not been exceeded. 
+				$can_register = $this->_check_reg_count( $quantity );
 
-			if ( !$can_register ) {
-				EE_Error::add_error( __('Sorry, although your registration id is valid. The purchased tickets attached to that id have all been registered for breakout sessions. If you feel this is in error, please contact us.', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
-				$route = 'default';
-				$success = FALSE;
+				 if ( !$can_register ) {
+					EE_Error::add_error( __('Sorry, although your registration id is valid, the purchased tickets attached to that id have all been registered for breakout sessions. If you feel this is in error, please contact us.', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
+					$route = 'default';
+					$success = FALSE;
+				}
 			}
 
-			//hey made it here so let's set the route and continue!
-			EE_Error::add_success( __('Your registration ID is validated, please make your selections for the breakout sessions using this form and then submit to register.', 'event_espresso') );
-			$route = 'breakout_info';
 
-			//let's make sure that we set the valid session item
-			$this->_session['registration_valid'] = TRUE;
+			//if STILL no error let's set the route and continue!
+			if ( $success ) {
+				EE_Error::add_success( __('Your registration ID is validated, please make your selections for the breakout sessions using this form and then submit to register.', 'event_espresso') );
+				$route = 'breakout_info';
+
+				//let's make sure that we set the valid session item
+				$this->_session['registration_valid'] = TRUE;
+			}
 		}
 
 		//if there's an error then we can clear the session and it can be reset on reload.
-		if ( !$success )
-			$this->_clear_session();
+		if ( !$success ) {
+			$this->_add_transient( 'default', array( 'registration_id' => $this->_req_data['ee_breakout_registration_id'] ));
+		}
 
 		$this->_redirect_page($route);
 	}
@@ -438,12 +482,12 @@ class EE_Breakouts_Main {
 	 * @return string html form for breakout registration.
 	 */
 	private function _display_breakout_registration() {
-		$this->_set_form_tags();
+		$this->_set_form_tags( array( 'query_args' => array('route' => 'breakout_process' ) ) );
 
 		$this->_set_submit( __('Register', 'event_espresso' ), 'breakout_process' );
 
 		//do we have any transient from the process route (validation errors)?
-		$errors = $this->_get_transient();
+		$errors = $this->_route_transient;
 
 		//setup fields
 		//need to get the breakout categories and then get the breakout events in each category
@@ -452,12 +496,12 @@ class EE_Breakouts_Main {
 		$options = array();
 		foreach ( $this->_breakout_categories as $category ) {
 			$events = $this->_get_events_for_cat( $category );
-			
+			$options = array();
 			if ( !empty( $events ) ) {
 				foreach ( $events as $event ) {
 					$category_name = $event->category_name;
 					//first let's make sure the number registered for this event and category haven't been exceeded.
-					if ( !$this->_check_event_reg_limit( $event->event_id, $event_category_name ) )
+					if ( !$this->_check_event_reg_limit( $event->event_id, $category_name ) )
 						continue;
 
 					$options[] = array(
@@ -465,6 +509,17 @@ class EE_Breakouts_Main {
 						'id' => $event->event_id
 						);
 				}
+
+				//don't show assemble field for the current breakout if there are no options.
+				if ( empty($options) ) continue;
+
+				//let's ADD a "select none" option
+				$select_none = array(
+					'text' => __('Choose this to not register for this session', 'event_espresso'),
+					'id' => 'none'
+					);
+				array_unshift($options, $select_none);
+
 				$select_fields_array = array(
 					'name' => 'category_registration[' . $category . ']',
 					'values' => $options,
@@ -494,6 +549,18 @@ class EE_Breakouts_Main {
 				'class' => isset( $errors['last_name']['msg'] ) ? 'validate-error normal-text-field' : 'normal-text-field',
 				'value' => isset( $errors['last_name']['value'] ) ? $errors['last_name']['value'] : ''
 				),
+			'registration_info[church_name]' => array(
+				'label' => __('Church Name', 'event_espresso'),
+				'type' => 'text',
+				'class' => isset( $errors['church_name']['msg'] ) ? 'validate-error normal-text-field' : 'normal-text-field',
+				'value' => isset( $errors['church_name']['value'] ) ? $errors['church_name']['value'] : ''
+				),
+			'registration_info[city]' => array(
+				'label' => __('City/Town', 'event_espresso'),
+				'type' => 'text',
+				'class' => isset( $errors['city']['msg'] ) ? 'validate-error normal-text-field' : 'normal-text-field',
+				'value' => isset( $errors['city']['value'] ) ? $errors['city']['value'] : ''
+				),
 			'registration_info[email_address]' => array(
 				'label' => __( 'Email Address', 'event_espresso'),
 				'type' => 'text',
@@ -520,43 +587,73 @@ class EE_Breakouts_Main {
 		global $wpdb, $org_options;
 		$data = array();
 		$error = FALSE;
-
+		$errors = array();
+		$has_error = FALSE;
+		$registration_error = FALSE;
+		$same_events = array();
 		//let's setup the data
 		if ( is_array( $this->_req_data['category_registration'] ) ) {
 			foreach ( $this->_req_data['category_registration'] as $cat_id => $evt_id ) {
+				if ( $evt_id == 'none' ) continue;
 				$data['breakout_selections'][] = array(
 					'cat_id' => (int) $cat_id,
 					'event_id' => (int) $evt_id
 					);
+				if ( !in_array( $evt_id, $same_events ) ) {
+					$same_events[] = $evt_id;
+				} else {
+					$errors = TRUE;
+				}
 			}
 		}
 
+
+		
+
 		if ( is_array( $this->_req_data['registration_info']) ) {
-			$data['registration_info']['first_name'] = isset( $this->_req_data['registration_info']['first_name'] ) ? wp_kses($this->_req_data['registration_info']['first_name'] ) : '';
-			$data['registration_info']['last_name'] = isset( $this->_req_data['registration_info']['last_name'] ) ? wp_kses( $this->_req_data['registration_info']['last_name'] ) : '';
+			$data['registration_info']['first_name'] = isset( $this->_req_data['registration_info']['first_name'] ) ? wp_kses_post($this->_req_data['registration_info']['first_name'] ) : '';
+			$data['registration_info']['last_name'] = isset( $this->_req_data['registration_info']['last_name'] ) ? wp_kses_post( $this->_req_data['registration_info']['last_name'] ) : '';
+			$data['registration_info']['church_name'] = isset( $this->_req_data['registration_info']['church_name'] ) ? wp_kses_post( $this->_req_data['registration_info']['church_name'] ) : '';
+			$data['registration_info']['city'] = isset( $this->_req_data['registration_info']['city'] ) ? wp_kses_post( $this->_req_data['registration_info']['city'] ) : '';
 			$data['registration_info']['email_address'] = isset( $this->_req_data['registration_info']['email_address'] ) ? is_email($this->_req_data['registration_info']['email_address'] ) : ''; 
 		}
 
 		//data is setup, now let's validate
-		$errors = array();
 		foreach ( $data['registration_info'] as $key => $value ) {
 			if ( empty( $value ) ) {
-				$errors[$key]['msg'] = $key == 'email_address' ? __('Invalid Email Address. Please doublecheck and make sure its in the right format', 'event_espresso') : __('The fields cannot be empty, please fill them out and submit again.', 'event_espresso');
-				$errors[$key]['value'] = $field;
+				if ( $key == 'email_address' ) {
+				 	EE_Error::add_error( __('Invalid Email Address. Please doublecheck and make sure its in the right format', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__);
+				 } else {
+				 	$registration_error = TRUE;
+				 }
+				 $errors[$key]['msg'] = TRUE;
 			}
 		}
 
+
 		//if we've got errors then let's setup values for all the selections as well. Then we'll setup the return to the breakout selection field
-		if ( !empty($errors) ) {
-			foreach ( $data['breakout_selections'] as $index => $values ) {
-				$errors['breakout_selections'][$values['cat_id']]['value'] = $values['event_id'];
+		if ( !empty($errors) || $errors || $registration_error ) {
+			$errors = (array) $errors;
+			if ( isset( $data['breakout_selections'] ) && is_array( $data['breakout_selections'] ) ) {
+				foreach ( $data['breakout_selections'] as $index => $values ) {
+					$errors['breakout_selections'][$values['cat_id']]['value'] = $values['event_id'];
+
+					if ( !in_array($values['event_id'], $same_events ) && !$has_error ) {
+						$errors['breakout_selections'][$values['cat_id']]['msg'] = __('You cannot register for the same session in multiple breakout options. Please go over your list of picked options and make sure each session has a unique pick.', 'event_espresso');
+						$has_error=TRUE;
+						EE_Error::add_error( $errors['breakout_selections'][$values['cat_id']]['msg'], __FILE__, __FUNCTION__, __LINE__ );
+					}
+				}
+			}
+
+			//add errors for registration info
+			foreach ( $data['registration_info'] as $key => $value ) {
+				$errors[$key]['value'] = $this->_req_data['registration_info'][$key];
 			}
 
 			//add notices
-			foreach ( $errors as $key => $values ) {
-				if ( isset($values['msg'] ) ) {
-					EE_Error::add_error( $values['msg'], __FILE__, __FUNCTION__, __LINE__ );
-				}
+			if ( $registration_error ) {
+				EE_Error::add_error( __('All the indicated fields must be filled in and cannot be left empty.  Thank you.', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
 			}
 
 			$this->_add_transient( 'breakout_registration', $errors );
@@ -568,7 +665,7 @@ class EE_Breakouts_Main {
 	
 		
 		//loop through each breakout registration
-		foreach ( $data['breakout_selections'] as $breakout ) {
+		foreach ( $data['breakout_selections'] as $key => $breakout ) {
 			$error = FALSE;
 			$event_id = $breakout['event_id'];
 			//common values needing generated
@@ -588,53 +685,68 @@ class EE_Breakouts_Main {
 				$end_date		= $time->end_date;
 			}
 
-			//here are all the vars to save
-			$columns_and_values = array(
-					'registration_id'		=> uniqid($breakout['event_id'] . '-'),
-					'is_primary'			=> TRUE,
-					'attendee_session'		=> $this->_session['id'],
-					'lname'					=> $data['registration_info']['last_name'],
-					'fname'					=> $data['registration_info']['first_name'],
-					'address'				=> '',
-					'address2'				=> '',
-					'city'					=> '',
-					'state'					=> '',
-					'zip'					=> '',
-					'email'					=> $data['registration_info']['email_address'],
-					'phone'					=> '',
-					'payment'				=> '',
-					'txn_type'				=> '',
-					'coupon_code'			=> '',
-					'event_time'			=> $start_time,
-					'end_time'				=> $end_time,
-					'start_date'			=> $start_date,
-					'end_date'				=> $end_date,
-					'price_option'			=> 'Breakout Session',
-					'organization_name'		=> '',
-					'country_id'			=> '',
-					'payment_status'		=> 'Completed',
-					'payment_date'			=> date(get_option('date_format')),
-					'event_id'				=> $event_id,
-					'quantity'				=> 1,
-					'amount_pd'				=> 0.00,
-					'orig_price'			=> 0.00,
-					'final_price'			=> 0.00
-				);
-				
+			//setup price type for this breakout session.
+			$price_option = $this->_check_breakout_session_price_setup( $event_id, $breakout['cat_id'] );
 
-			$data_formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%f', '%f', '%f' );
 
-			// save the attendee details - FINALLY !!!
-			if ( ! $wpdb->insert( EVENTS_ATTENDEE_TABLE, $columns_and_values, $data_formats )) {
-				$error = true;
+			if ( $price_option ) {
+			
+
+				//here are all the vars to save
+				$columns_and_values = array(
+						'registration_id'		=> uniqid($breakout['event_id'] . '-'),
+						'is_primary'			=> TRUE,
+						'attendee_session'		=> $this->_session['id'],
+						'lname'					=> $data['registration_info']['last_name'],
+						'fname'					=> $data['registration_info']['first_name'],
+						'address'				=> '',
+						'address2'				=> '',
+						'city'					=> $data['registration_info']['city'],
+						'state'					=> '',
+						'zip'					=> '',
+						'email'					=> $data['registration_info']['email_address'],
+						'phone'					=> '',
+						'payment'				=> '',
+						'txn_type'				=> '',
+						'coupon_code'			=> '',
+						'event_time'			=> $start_time,
+						'end_time'				=> $end_time,
+						'start_date'			=> $start_date,
+						'end_date'				=> $end_date,
+						'price_option'			=> $price_option,
+						'organization_name'		=> $data['registration_info']['church_name'],
+						'country_id'			=> '',
+						'payment_status'		=> 'Completed',
+						'payment_date'			=> date(get_option('date_format')),
+						'event_id'				=> $event_id,
+						'quantity'				=> 1,
+						'amount_pd'				=> 0.00,
+						'orig_price'			=> 0.00,
+						'final_price'			=> 0.00
+					);
+					
+
+				$data_formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%f', '%f', '%f' );
+				// save the attendee details - FINALLY !!!
+				if ( ! $wpdb->insert( EVENTS_ATTENDEE_TABLE, $columns_and_values, $data_formats )) {
+					$error = TRUE;
+				}
+			} else {
+				$error = TRUE;
 			}
 
 			//do breakout session counts (if no error);
 			if ( !$error ) {
-				$breakout_selections['breakout_session_name'] = $this->_update_breakout_session_counts( $breakout );
-				$breakout_selections['breakout_name'] = get_event_field( 'event_name', EVENTS_DETAIL_TABLE, ' WHERE id = ' . $event_id );
+				$data['breakout_selections'][$key]['breakout_session_name'] = $this->_update_breakout_session_counts( $breakout, $wpdb->insert_id );
+				$data['breakout_selections'][$key]['breakout_name'] = get_event_field( 'event_name', EVENTS_DETAIL_TABLE, ' WHERE id = ' . $event_id );
 			}
 		}
+
+		//update count for the registration id
+		if ( !$error ) {
+			$this->_update_reg_id_count();
+		}
+
 
 		if ( !$error ) {
 			//made it here? everything must have been successful, so let's redirect to the complete page.
@@ -643,7 +755,52 @@ class EE_Breakouts_Main {
 			$this->_add_transient( 'breakout_complete', $data );
 
 			$this->_redirect_page( 'breakout_complete' );
+		} else {
+			$this->_redirect_page( 'breakout_registration' );
 		}
+	}
+
+
+
+
+	/**
+	 * This just checks to see if we have a "Breakout Session..." price type setup for Breakout sessions.  If we don't, then we create it.  If we do then we'll just use whatever is set.  This price type will assume the title of the Breakout Session Name
+	 * @return void
+	 */
+	private function _check_breakout_session_price_setup( $event_id, $cat_id ) {
+		global $wpdb;
+
+		//first let's get the cat_name
+		$cat_name = get_event_field('category_name', EVENTS_CATEGORY_TABLE, ' WHERE id = ' . $cat_id );
+
+		$price_type_name = 'Session: ' . $cat_name;
+
+		//check to see if we have a "price_type_name" price type setup.  If not then let's do it.
+		$sql = "SELECT p.price_type FROM " . EVENTS_PRICES_TABLE . " AS p WHERE p.price_type = %s";
+		$results = $wpdb->get_var( $wpdb->prepare( $sql, $price_type_name ) );
+
+		if ( empty( $results ) ) {
+			//no Breakout session setup. Let's do this!
+			$cols_and_vals = array(
+				'event_id' => (int) $event_id,
+				'price_type' => stripslashes_deep($price_type_name),
+				'event_cost' => 0.00,
+				'surcharge' => 0.00,
+				'surcharge_type' => 'flat_rate',
+				'member_price' => 0.00,
+				'member_price_type' => 'Members Admission',
+				'max_qty' => 0,
+				'max_qty_members' => 0,
+				);
+			$data_formats = array( '%d', '%s', '%f', '%f', '%s', '%f', '%s', '%d', '%d' );
+			if ( !$wpdb->insert( EVENTS_PRICES_TABLE, $cols_and_vals, $data_formats )) {
+				$EE_error::add_error( sprintf( __('An error occured. "Breakout Session" price type not saved for Event with ID: %d','event_espresso'), $event_id ) );
+				return false;
+			} else {
+				return $price_type_name;
+			}
+		}
+		return $price_type_name;
 	}
 
 
@@ -654,7 +811,7 @@ class EE_Breakouts_Main {
 	 * @param  array $breakout incoming array of breakout details ('cat_id', 'event_id');
 	 * @return void
 	 */
-	private function _update_breakout_session_counts( $breakout ) {
+	private function _update_breakout_session_counts( $breakout, $att_id ) {
 		global $wpdb;
 		if ( !is_array( $breakout ) )
 			return FALSE;
@@ -694,13 +851,29 @@ class EE_Breakouts_Main {
 		if ( !$wpdb->update( EVENTS_DETAIL_TABLE, $data, $where, $format, $where_format ) )
 			return false;
 
-		//made it here so we can also update the registration count for the registration id
-		$reg_count = (int) get_option( $this->_session['registration_id'] . '_breakout_count' );
-		$new_count = !empty($reg_count) ? $reg_count++ : 1;
-		update_option( $this->_session['registration_id'] . '_breakout_count' );
+		//we also want to make sure that the original reg_id this attendee represents (for the main event all breakouts are attached to) is saved as an attendee meta for this attendee.
+		if ( !empty($att_id ) ) {
+			require_once( EE_BREAKOUTS_PATH . 'helpers/EE_Data_Retriever.helper.php' );
+			EE_Data_Retriever::save_attendee_meta( $att_id, 'breakout_main_registration_id', $this->_session['registration_id'] );
+
+			//let's also update attendee meta with the breakout category id for the event they registered for.
+			EE_Data_Retriever::save_attendee_meta( $att_id, 'breakout_cat_id', $cat_id );
+			EE_Data_Retriever::save_attendee_meta( $att_id, 'breakout_category_name', $category_name );
+		}
 
 		//we'll return the category name on success.
 		return $category_name;
+	}
+
+
+
+
+
+	private function _update_reg_id_count() {
+		//made it here so we can also update the registration count for the registration id
+		$reg_count = (int) get_option( $this->_session['registration_id'] . '_breakout_count' );
+		$new_count = $reg_count ? $reg_count + 1: 1;
+		update_option( $this->_session['registration_id'] . '_breakout_count', $new_count );
 	}
 
 
@@ -710,17 +883,17 @@ class EE_Breakouts_Main {
 	 * @return void
 	 */
 	private function _breakout_finished() {
-		//first let's clear the session.
-		$this->_clear_session();
 
-		//next let's retrieve the _transient sent from previous route
-		$data = $this->_get_transient();
+		//let's retrieve the _transient sent from previous route
+		$data = $this->_route_transient;
 
 		//now let's setup the template args
-		$this->_template_args['breakouts'] = $data;
+		$this->_template_args['breakouts'] = $data['breakout_selections'];
 		$template_path = EE_BREAKOUTS_TEMPLATE_PATH . 'ee-breakouts-final-page.template.php';
 		$this->_template_args['main_content'] = $this->_display_template( $template_path, $this->_template_args );
 		$this->_set_content();
+		//finally let's clear the session.
+		$this->_clear_session();
 	}
 
 
@@ -738,6 +911,13 @@ class EE_Breakouts_Main {
 	 */
 	private function _clear_session() {
 		if ( isset( $_SESSION['espresso_breakout_session'] ) ) {
+			//remove any existing transients for this session and route;
+			foreach ( $this->_page_routes as $route => $func ) {
+				$r_t = 'r_' . $route . '_' . $this->_session['transient_id'];
+				$n_t = 'n_' . $route . '_' . $this->_session['transient_id'];
+				delete_transient($r_t);
+				delete_transient($n_t);
+			}
 			unset( $_SESSION['espresso_breakout_session'] );
 			$this->_session = NULL;
 		}
@@ -773,17 +953,18 @@ class EE_Breakouts_Main {
 		extract($vals, EXTR_SKIP);
 
 		//setup hidden fields
-		foreach ( $query_args as $name => $value ) {
-			$hidden_fields_send[$name] = array(
+		foreach ( $query_args as $q_name => $value ) {
+			$hidden_fields_send[$q_name] = array(
 				'type' => 'hidden',
 				'value' => $value,
 				); 
 		}
 
+
 		$hidden_fields = $this->_form_fields( $hidden_fields_send, TRUE );
 
 		//set form action
-		$action = wp_nonce_url( add_query_arg( $query_args, $this->_breakout_url ), $this->_req_nonce );
+		$action = add_query_arg( $query_args, $this->_breakout_url );
 
 		$this->_template_args['main_header'] = '<form id="' . $id . '" method="' . $method . '" name="' . $name . '" action="' . $action . '">';
 
@@ -817,7 +998,7 @@ class EE_Breakouts_Main {
 					'class' => '',
 					'autosize' => true
 					);
-				$fields = wp_parse_args( $defaults, $fields );
+				$fields = wp_parse_args( $fields, $defaults );
 				extract( $fields, EXTR_SKIP );
 				$form_fields = EE_Form_Fields::select_input( $name, $values, $default, $parameters, $class, $autosize );
 				break;
@@ -849,7 +1030,7 @@ class EE_Breakouts_Main {
 		$id = $this->_route . '_submit_button';
 		$name = 'submit_form';
 		$value = $label;
-		$redirect = wp_nonce_url( add_query_arg( array( 'route' => $to_route ), $this->_breakout_url ), $to_route . '_nonce' );
+		$redirect = add_query_arg( array( 'route' => $to_route ), $this->_breakout_url );
 
 		//hidden field for redirect
 		$hidden_fields['ee_breakout_redirect'] = array(
@@ -876,7 +1057,6 @@ class EE_Breakouts_Main {
 	private function _set_content() {
 
 		$template_path = EE_BREAKOUTS_TEMPLATE_PATH . 'ee-breakouts-main-wrapper.template.php';
-		$this->_template_args['notices'] = $this->_display_notices();
 		$this->_content = $this->_display_template( $template_path, $this->_template_args );
 
 	}
@@ -947,7 +1127,7 @@ class EE_Breakouts_Main {
 
 		// if we have a given route then let's setup the url for it
 		if ( $route ) {
-			$redirect_url = wp_nonce_url( add_query_arg( array('route' => $route, 'notices' => $notices ) ), $route . '_nonce' );
+			$redirect_url =add_query_arg( array('route' => $route) );
 		}
 		$redirect_url = $route ? $redirect_url : $this->_req_data['ee_breakout_redirect'];
 
@@ -974,7 +1154,7 @@ class EE_Breakouts_Main {
 
 
 		//now let's set the string for what kind of transient we're setting
-		$transient = $notices ? 'rte_n_tx_' . $route . '_' . $this->_session['id'] : 'rte_tx_' . $route . '_' . $this->_session['id'];
+		$transient = $notices ? 'n_' . $route . '_' . $this->_session['transient_id'] : 'r_' . $route . '_' . $this->_session['transient_id'];
 		$data = $notices ? array( 'notices' => $data ) : $data;
 		//is there already a transient for this route?  If there is then let's ADD to that transient
 		if ( $existing = get_transient( $transient ) ) {
@@ -995,7 +1175,7 @@ class EE_Breakouts_Main {
 	protected function _get_transient( $notices = FALSE, $route = FALSE ) {
 		$user_id = get_current_user_id();
 		$route = !$route ? $this->_route : $route;
-		$transient = $notices ? 'rte_n_tx_' . $route . '_' . $this->_session['id'] : 'rte_tx_' . $route . '_' . $this->_session['id'];
+		$transient = $notices ? 'n_' . $route . '_' . $this->_session['transient_id'] : 'r_' . $route . '_' . $this->_session['transient_id'];
 		$data = get_transient( $transient );
 		return $notices ? $data['notices'] : $data;
 	}
@@ -1069,7 +1249,7 @@ class EE_Breakouts_Main {
 	private function _get_events_for_cat( $cat_id ) {
 		global $wpdb;
 		$cat_id = (int) $cat_id;
-		$sql = "SELECT e.id as event_id, e.event_name as event_name, ecc.category_name as category_name FROM " . EVENTS_DETAIL_TABLE . " LEFT JOIN " . EVENTS_CATEGORY_REL_TABLE . " as ec ON ec.event_id = e.id LEFT JOIN " . EVENTS_CATEGORY_TABLE . " as ecc ON ecc.id = ec.cat_id WHERE ec.cat_id = %d";
+		$sql = "SELECT e.id as event_id, e.event_name as event_name, ecc.category_name as category_name FROM " . EVENTS_DETAIL_TABLE . " AS e LEFT JOIN " . EVENTS_CATEGORY_REL_TABLE . " as ec ON ec.event_id = e.id LEFT JOIN " . EVENTS_CATEGORY_TABLE . " as ecc ON ecc.id = ec.cat_id WHERE ec.cat_id = %d";
 		$results = $wpdb->get_results( $wpdb->prepare( $sql, $cat_id ) );
 		return $results;
 	}
@@ -1085,9 +1265,10 @@ class EE_Breakouts_Main {
 	 * @return mixed (bool|int)           if false then no registrations left, if true then still registrations left.
 	 */
 	private function _check_event_reg_limit( $e_id, $cat_name ) {
-		$reg_key = sanitize_key( $category_name ) . '_breakout_spots_left';
+		$reg_key = sanitize_key( $cat_name ) . '_breakout_spots_left';
 		$event_meta = event_espresso_get_event_meta( $e_id );
-		$num = $event_meta[$reg_key];
+		//if spots left hasn't been set yet then we will allow registration (it'll get set later) because this is the first registration for this id.
+		$num = isset($event_meta[$reg_key]) ? $event_meta[$reg_key] : 1;
 		return $num > 0 ? $num : FALSE;
 	}
 
@@ -1106,18 +1287,17 @@ class EE_Breakouts_Main {
 			return;
 		}
 
-		$t = time();
-		$t0 = $_SESSION['espresso_breakout_session']['expiry'];
-	    $diff = $t - $t0;
-	    //check for within 1 hour (60*60)
-	    if ($diff > 3600 || !isset($t0))
-	    {          
-	        $this->_clear_session();
-	    }
-	    else
-	    {
-	        $_SESSION['espresso_breakout_session']['expiry'] = time();
-	    }
+		if ( isset($_SESSION['espresso_breakout_session'] ) ) {
+
+			$t = time();
+			$t0 = $_SESSION['espresso_breakout_session']['expiry'];
+		    $diff = $t - $t0;
+		    //check for within 1 hour (60*60)
+		    if ( $diff > 3600 )
+		    {          
+		        $this->_clear_session();
+		    }
+		}
 	}
 
 }

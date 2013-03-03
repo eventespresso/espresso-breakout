@@ -1,0 +1,33 @@
+#message.updated, #message.error {
+	background-color: #fefa99;
+	margin-left: 5px;
+	margin-right: 5px;
+    padding: 8px;
+	-webkit-border-radius: 3px;
+	-webkit-appearance: none;
+	border-radius: 3px;
+	border: yellow 2px solid
+}
+
+#message.error p, #message.updated p {
+    margin: 0px;
+}
+
+#message.error {
+	background-color: #f26b5c;
+	border-color: red;
+}
+
+.ee-breakouts-transaction-form-dv .description {
+    font-size: .9em;
+    font-style: italic;
+    padding: 0;
+}
+
+.ee-breakouts-submit {
+    margin-top: 5px;
+}
+
+.validate-error {
+	border-color: red;
+}

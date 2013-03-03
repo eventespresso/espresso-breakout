@@ -32,11 +32,12 @@ function espresso_breakouts_version() {
 define( 'EE_BREAKOUTS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'EE_BREAKOUTS_URL', plugin_dir_url( __FILE__ ) );
 define( 'EE_BREAKOUTS_TEMPLATE_PATH', EE_BREAKOUTS_PATH . 'templates/' );
+define( 'EE_BREAKOUTS_VERSION', espresso_breakouts_version() );
 
 require EE_BREAKOUTS_PATH . 'classes/EE_Exceptions.class.php';
 require EE_BREAKOUTS_PATH . 'EE_Breakouts_Main.class.php';
 
-add_action('plugins_loaded', 'espresso_breakouts');
+add_action('init', 'espresso_breakouts');
 
 function espresso_breakouts() {
 	$EE_BRK_MAIN = new EE_Breakouts_Main();

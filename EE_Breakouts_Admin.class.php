@@ -37,6 +37,9 @@ class EE_Breakouts_Admin {
 
 		$this->_req_date = array_merge( $_GET, $_POST );
 
+		//stuff we DO want to be acted on (event when not on ee_breakouts_admin_page);
+		add_action('action_hook_espresso_before_delete_attendee_event_list', array( $this, 'update_breakout_info' ), 10, 2 );
+
 		if ( isset( $this->_req_data['page'] ) && $this->_req_data['page'] !== 'ee_breakouts_admin' )
 			return; //getout we only need to do stuff when we're on the breakouts page.
 
@@ -106,44 +109,8 @@ class EE_Breakouts_Admin {
 		$newinput['breakout_page'] = (int) $input['breakout_page'];
 		$newinput['breakout_categories'] = array_map( 'absint', $input['breakout_categories'] );
 		$newinput['breakout_main_event'] = (int) $input['breakout_main_event'];
-
-		$this->_check_breakout_session_price_setup( $newinput['breakout_page'] );
-
 		
 		return $newinput;
-	}
-
-
-
-	/**
-	 * This just checks to see if we have a "Breakout Session" price type setup for Breakout sessions.  If we don't, then we create it.  If we do then we'll just use whatever is set.
-	 * @return void
-	 */
-	private function _check_breakout_session_price_setup( $event_id ) {
-		global $wpdb;
-
-		//check to see if we have a "Breakout Session" price type setup.  If not then let's do it.
-		$sql = "SELECT p.price_type FROM " . EVENTS_PRICES_TABLE . " AS p WHERE p.price_type = %s";
-		$results = $wpdb->get_var( $wpdb->prepare( $sql, 'Breakout Session' ) );
-
-		if ( empty( $results ) ) {
-			//no Breakout session setup. Let's do this!
-			$cols_and_vals = array(
-				'event_id' => $event_id,
-				'price_type' => 'Breakout Session',
-				'event_cost' => 0.00,
-				'surcharge' => 0.00,
-				'surcharge_type' => 'flat_rate',
-				'member_price' => 0.00,
-				'member_price_type' => 'Members Admission',
-				'max_qty' => 0,
-				'max_qty_members' => 0,
-				);
-			$data_formats = array( '%d', '%s', '%f', '%f', '%s', '%f', '%s', '%d', '%d' );
-			if ( !$wpdb->insert( EVENTS_PRICES_TABLE, $cols_and_vals, $data_formats )) {
-				$error = sprintf( __('An error occured. "Breakout Session" price type not saved for Event with ID: %d','event_espresso'), $event_id );
-			}
-		}
 	}
 	
 
@@ -305,6 +272,69 @@ class EE_Breakouts_Admin {
 		$content = '<h3>' . __('Breakout Main Event', 'event_espresso') . '</h3>';
 		$content .= '<p>' .  __('Select from the list of events, which one is the "Main Event" that users have registered with.  This is the event that all the breakout sessions happen at.', 'event_espresso') . '</p>';
 		return $content;
+	}
+
+
+	/**
+	 * This just takes care of updating any breakout info that may be associated with an attendee id when an attendee is deleted (via Event List view)
+	 * @param  int $att_id Attendee ID
+	 * @param  int $evt_id Event ID
+	 * @return void
+	 */
+	public function update_breakout_info( $att_id, $evt_id ) {
+		global $wpdb;
+		//set settings hasn't been run so let's do that
+		$this->_set_settings();
+		$evt_id = (int) $evt_id;
+		$att_id = (int) $att_id;
+
+		//make sure the incoming event (if one) is a breakout event!
+		if ( empty($evt_id) ) return;  //empty event can't do anything!
+
+		//get categories this event belongs to!
+		$sql = "SELECT ec.cat_id AS c_id FROM " . EVENTS_CATEGORY_REL_TABLE . " as ec WHERE ec.event_id = %d";
+		$cats = $wpdb->get_results( $wpdb->prepare( $sql, $evt_id ) );
+		$e_cats = array();
+		if ( !empty( $cats ) ) {
+			//prepare cats for check
+			foreach ( $cats as $cat ) {
+				if ( in_array($cat->c_id, $this->_settings['breakout_categories'] ) )
+					$e_cats[] = $cat->c_id;
+			}
+		}
+
+		if ( empty($e_cats) ) return; //this event doesn't belong to any of the breakout categories so get out.
+
+		require_once( EE_BREAKOUTS_PATH . 'helpers/EE_Data_Retriever.helper.php' );
+
+		//made it here so let's setup the deletes for extra breakout info.
+		//first get the main event registration id to update the breakout count attached to that reg id
+		$reg_id = EE_Data_Retriever::get_attendee_meta_value( $att_id, 'breakout_main_registration_id' );
+
+		//update reg_id count
+		$existing_reg_count = (int) get_option( $reg_id . '_breakout_count' );
+		$new_count = !empty($existing_reg_count) ? $existing_reg_count - 1 : 0;
+		update_option( $reg_id . '_breakout_count', $new_count );
+
+		//we need to update the event meta count for the breakout cat this attendee attached to.  So let's take care of that.
+		$breakout_cat_name =  EE_Data_Retriever::get_attendee_meta_value( $att_id, 'breakout_category_name' );
+		$ref = sanitize_key( $breakout_cat_name ) . '_breakout_spots_left';
+
+		//get event_meta for given event
+		$event_meta = event_espresso_get_event_meta($evt_id);
+		$event_meta[$ref] = isset( $event_meta[$ref] ) ? $event_meta[$ref] + 1 : '';
+
+		//update meta for event with new count
+		if ( !empty( $event_meta[$ref] ) ) {
+			$data = array( 'event_meta' => serialize($event_meta) );
+			$format = array( '%s' );
+			$where = array( 'id' => $evt_id );
+			$where_format = array( '%d' );
+			$wpdb->update( EVENTS_DETAIL_TABLE, $data, $where, $format, $where_format );
+		}
+
+		//great that's it!  all attendee meta fields should get deleted by EE core after this hook is executed.
+		
 	}
 
 }// end class EE_Breakouts_Admin
