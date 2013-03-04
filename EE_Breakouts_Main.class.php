@@ -6,32 +6,31 @@ if (!defined('EE_BREAKOUTS_PATH') )
 /**
 	 * STEP ONE
 	 * ******
-	 * user visits a special "breakout" registration page. They will enter a transaction ID for the main event to gain access.
-	 * The breakout page is setup by using a new shortcode [ESPRESSO_BREAKOUT];
+	 * user visits a special "breakout" registration page. They will enter a registration ID for the main event (that breakouts are attached to) to gain access.
+	 * The breakout page is setup by using a new shortcode [EE_BREAKOUTS] and making sure the related options on the new options page are completed (instructions on the options page);
 	 *
 	 * STEP TWO
 	 * *******
-	 * system verifies transaction ID 
+	 * system verifies registration ID 
 	 * Warning message if not verified (or all slots for that id have been used up)
-	 * If transaction ID is verified then users will be shown a list of info for all the breakout sessions.
-	 * If transation ID is verified, the system will do a "soft lock" on the transaction count to make sure that if a bunch of people register with that id at once they will still decrement counts.  The soft lock will be a transient that expires after 10 minutes (or when its deleted at the end of the complete registration).
-	 * A button will float down as they are reading that will take them to the selection page for breakout sessions.
+	 * If registration ID is verified then user will be sent to the next step.
 	 *
 	 * STEP THREE
 	 * ********
-	 * There will be a page with a label for each Breakout (Breakout 1, 2, 3, 4)
-	 * Underneath will be a dropdown of events assigned to the corresponding breakout category and customers pick from the dropdown which session they want to register for.  NOTE only sessions which still have available spots available will be listed.  
+	 * There will be a page with a label for each Breakout (Breakout 1, 2, 3, 4 et. The actual labels are the names of the categories the user selected as event categories breakout sessions (events) are assigned to)
+	 * Beside is a dropdown of events assigned to the corresponding breakout category and customers pick from the dropdown which session they want to register for.  NOTE only sessions which still have available spots available will be listed.  
 	 * At the bottom is a form for the registration data to be collected and the submit button
 	 *
 	 * STEP FOUR
 	 * *********
-	 * On submit.  The system will do one final check to see if all the events the customer selected are still open (i.e. while they were registering someone else didn't take a remaining spot). 
-	 * If fail, then they will be returned to their form and they will be given a message indicating which events are no longer available, giving them the option to select from the new dropdown list which they wish to register for.
-	 * If success, the system will delete the soft lock for the transaction_id count and permanentlyl record the remaining spots for the transaction id.
+	 * On submit.  The system does some validation checks. 
+	 * If fail, then they will be returned to their form and they will be given a message indicating what didn't validate and inputs highlighted that they need to fix..
+	 * If success, the system records and updates all counts for the breakout, increments the registrations for the registration_id.
+	 * Session is also cleared.
 	 * The attendee will be registered for the breakout sessions they selected.
 	 * An email will be sent to the attendee listing all the breakouts they successfully registered for.
 	 *
-	 * 
+	 * NOTE: The session process used in this addon is fairly well protected and locked down.  If a user browses back or reloads the page in their browser, that will cancel their existing session and they will need to start over again.  This prevents multiple registrations while authed with a valid main event registration id.
 	 */
 
 class EE_Breakouts_Main {
@@ -751,6 +750,9 @@ class EE_Breakouts_Main {
 		if ( !$error ) {
 			//made it here? everything must have been successful, so let's redirect to the complete page.
 			EE_Error::add_success(__('Successfully registered for breakout sessions!', 'event_espresso') );
+
+			$this->_send_email( $data );
+
 			//add the category names to the transient
 			$this->_add_transient( 'breakout_complete', $data );
 
@@ -758,6 +760,70 @@ class EE_Breakouts_Main {
 		} else {
 			$this->_redirect_page( 'breakout_registration' );
 		}
+	}
+
+
+
+
+	/**
+	 * This just sends a confirmation email for the registration.
+	 *
+	 * We use the 'ee-breakouts-email-confirmation.template.php'.  Right now its just a simple text based email with some limited "shortcodes" that get replaced.
+	 * @param  array $data array of breakout registration data for use in the email
+	 * @return void
+	 */
+	private function _send_email( $data ) {
+		global $org_options;
+		$send_to = $data['registration_info']['email_address'];
+		$send_from = isset( $org_options['contact_email'] ) ? $org_options['contact_email'] : get_bloginfo('admin_email');
+
+
+		//setup the content
+		$template = file_get_contents( EE_BREAKOUTS_PATH . 'templates/ee-breakouts-email-confirmation.template.php', TRUE );
+		
+		if ( empty( $template ) ){
+			EE_Error::add_error( __('Email was not sent because the template was not available', 'event_espresso'), __FILE__, __FUNCTION__, __LINE__ );
+			return; //get out, we need a template!	
+		} 
+
+		//let's start replacing things in the template
+		$msg = str_replace('[FIRST_NAME]', $data['registration_info']['first_name'], $template);
+
+		//get main_event name
+		$main_event_name = get_event_field( 'event_name', EVENTS_DETAIL_TABLE, ' WHERE id = ' . (int) $this->_settings['breakout_main_event'] );
+		$subject = sprintf( __('Breakout Registration Confirmation for %s', 'event_espresso'), $main_event_name );
+
+		$msg = str_replace( '[MAIN_EVENT_NAME]', $main_event_name, $msg );
+
+		//get breakout list
+		$breakout_list = '';
+		foreach ( $data['breakout_selections'] as $key => $breakout ) {
+			$breakout_list .= $breakout['breakout_session_name'] . ':  ' . $breakout['breakout_name'] . "\n\r";
+		}
+
+		$msg = str_replace( '[BREAKOUT_LIST]', $breakout_list, $msg );
+
+		//organization name
+		$org_name = isset( $org_options['organization'] ) ? $org_options['organization'] : '';
+		$msg = str_replace( '[ORGANIZATION_NAME]', $org_name, $msg );
+
+		//headers
+		$headers = array(
+			'MIME-Version' => '1.0',
+			'From' => $send_from,
+			'Reply-To' => $send_from,
+			'Content-Type' => ' text/plain; charset=utf-8'
+			);
+
+		$success = wp_mail( $send_to, $subject, $msg, $headers );
+
+		if ( $success ) {
+			EE_Error::add_success( __('Email Confirmation sent.', 'event_espresso') );
+		} else {
+			EE_Error::add_error( __('Something prevented the sending of the email confirmation.  Please print this page for your records.', 'event_espresso' ) );
+			var_dump($success);
+		}
+		return;
 	}
 
 

@@ -8,6 +8,7 @@
 			<?php endforeach; ?>
 		</ul>
 
+		<strong>We suggest you print this page for future reference.</strong><br />
 		We look forward to seeing you at the conference!
 	</p>
 </div>
