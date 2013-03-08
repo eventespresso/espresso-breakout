@@ -2,7 +2,7 @@
 /*
 Plugin Name: Event Espresso - Breakouts
 Plugin URI: http://eventespresso.com/
-Description: This hooks into the Event Espresso Plugin and allows event managers to have attendees who have already registered for a main event use their transaction id to signup for free breakout sessions (separate events).
+Description: This hooks into the Event Espresso Plugin and allows event managers to have attendees who have already registered for a main event use their registration id to signup for free breakout sessions (separate events).
 Version: 1.0
 
 Author: Event Espresso
