@@ -311,10 +311,27 @@ class EE_Breakouts_Admin {
 		//first get the main event registration id to update the breakout count attached to that reg id
 		$reg_id = EE_Data_Retriever::get_attendee_meta_value( $att_id, 'breakout_main_registration_id' );
 
-		//update reg_id count
-		$existing_reg_count = (int) get_option( $reg_id . '_breakout_count' );
-		$new_count = !empty($existing_reg_count) ? $existing_reg_count - 1 : 0;
-		update_option( $reg_id . '_breakout_count', $new_count );
+		//do we delete reg_id?
+		$reg_group = EE_Data_Retriever::get_attendee_meta_value( $att_id, 'breakout_reg_group' );
+		$reg_ref = 'brk_id_' . $reg_group;
+		$reg_id_count = (int) get_option($reg_ref);
+		$new_id_count = !empty($reg_id_count) ? $reg_id_count - 1 : 0;
+
+		//now we ONLY update the breakout count IF the $new_id_count is 0 or less.
+		if ( $new_id_count <= 0 ) {
+			//update reg_id count
+			$existing_reg_count = (int) get_option( $reg_id . '_breakout_count' );
+			$new_count = !empty($existing_reg_count) ? $existing_reg_count - 1 : 0;
+			if ( $new_count > 0 )
+				update_option( $reg_id . '_breakout_count', $new_count );
+			else
+				delete_option( $reg_id . '_breakout_count' );
+		}
+
+		if ( $new_id_count > 0 )
+			update_option( $reg_ref, $new_id_count );
+		else
+			delete_option($reg_ref);
 
 		//we need to update the event meta count for the breakout cat this attendee attached to.  So let's take care of that.
 		$breakout_cat_name =  EE_Data_Retriever::get_attendee_meta_value( $att_id, 'breakout_category_name' );

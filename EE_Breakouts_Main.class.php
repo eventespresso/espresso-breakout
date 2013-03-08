@@ -167,8 +167,14 @@ class EE_Breakouts_Main {
 		
 		$this->_set_props();
 
+		add_action( 'wp', array( $this, 'load_page' ), 10 );
+
+	}
+
+
+	public function load_page() {
 		//check if we need to go any further.
-		if ( empty( $this->_settings ) || ( isset($_REQUEST['page_id'] ) && $_REQUEST['page_id'] != $this->_breakout_page ) ) 
+		if ( empty( $this->_settings ) || ( get_the_ID() != $this->_breakout_page ) )
 			return; //getout no settings or we aren't on a breakout page.
 
 		$this->_set_page_routes();
@@ -176,8 +182,6 @@ class EE_Breakouts_Main {
 		
 
 		$this->_route_request();
-
-
 	}
 
 
@@ -271,7 +275,7 @@ class EE_Breakouts_Main {
 
 		//session check but only when on default or registration verify
 		if ( $this->_route != 'default' && $this->_route != 'registration_verify' ) {
-
+	
 			//we also check if valid registration access has been set in the session
 			if ( ! $this->_session['registration_valid'] ) {
 				wp_die( sprintf( __('<strong>Invalid Session</strong> This page cannot be accessed without a valid registration id entered. %sClick Here to start over%s', 'event_espresso'), '<a href="' . $this->_breakout_url . '">', '</a>' ), __('Error', 'event_espresso' ) );
@@ -280,10 +284,10 @@ class EE_Breakouts_Main {
 		}
 
 		//do a check prevent refreshes on page routes (and duplicate registrations);
-		if ( $this->_session['espresso_breakout_session']['visited'] ) {
+		if ( $this->_session['visited'] ) {
 			wp_die( sprintf( __('<strong>Invalid Page Load</strong> It looks like you hit the back key or tried to refresh the page. To prevent possible duplicate registrations for breakout sessions, we have error controls in place.  You\'ll need to start again by %sclicking this link%s.', 'event_espresso'), '<a href="' . $this->_breakout_url . '">', '</a>' ), __('Error', 'event_espresso' ) );
 		} else {
-			$this->_session['espresso_breakout_session']['visited'] = $this->_route;
+			$this->_session['visited'] = $this->_route;
 			$this->_update_session();
 		}
 
@@ -338,7 +342,7 @@ class EE_Breakouts_Main {
 
 		//first let's see if the user has not been active, we'll give them one hour.  If they are inactive after one hour then we remove their session.
 		$this->_check_auto_end_session();
-
+		
 		$this->_session = isset($_SESSION['espresso_breakout_session']) ? $_SESSION['espresso_breakout_session'] : array();
 
 		
@@ -365,7 +369,7 @@ class EE_Breakouts_Main {
 		}
 		
 		$this->_session = $_SESSION['espresso_breakout_session'];
-		$this->_session['espresso_breakout_session']['visited'] = isset($this->_session['espresso_breakout_session']['visited']) && $this->_session['espresso_breakout_session']['visited'] == $this->_route ? TRUE : FALSE;
+		$this->_session['visited'] = isset($this->_session['visited']) && $this->_session['visited'] == $this->_route ? TRUE : FALSE;
 	}
 
 
@@ -661,7 +665,8 @@ class EE_Breakouts_Main {
 		}
 
 		//made it here so we can save the data
-	
+		//set a "group" for this registration (i.e. the attendee used the same details for multiple breakout events but each event has a separate attendee id for that registrant).
+		$reg_group = uniqid();
 		
 		//loop through each breakout registration
 		foreach ( $data['breakout_selections'] as $key => $breakout ) {
@@ -736,7 +741,7 @@ class EE_Breakouts_Main {
 
 			//do breakout session counts (if no error);
 			if ( !$error ) {
-				$data['breakout_selections'][$key]['breakout_session_name'] = $this->_update_breakout_session_counts( $breakout, $wpdb->insert_id );
+				$data['breakout_selections'][$key]['breakout_session_name'] = $this->_update_breakout_session_counts( $breakout, $wpdb->insert_id, $reg_group );
 				$data['breakout_selections'][$key]['breakout_name'] = get_event_field( 'event_name', EVENTS_DETAIL_TABLE, ' WHERE id = ' . $event_id );
 			}
 		}
@@ -821,7 +826,6 @@ class EE_Breakouts_Main {
 			EE_Error::add_success( __('Email Confirmation sent.', 'event_espresso') );
 		} else {
 			EE_Error::add_error( __('Something prevented the sending of the email confirmation.  Please print this page for your records.', 'event_espresso' ) );
-			var_dump($success);
 		}
 		return;
 	}
@@ -877,7 +881,7 @@ class EE_Breakouts_Main {
 	 * @param  array $breakout incoming array of breakout details ('cat_id', 'event_id');
 	 * @return void
 	 */
-	private function _update_breakout_session_counts( $breakout, $att_id ) {
+	private function _update_breakout_session_counts( $breakout, $att_id, $reg_group ) {
 		global $wpdb;
 		if ( !is_array( $breakout ) )
 			return FALSE;
@@ -905,7 +909,7 @@ class EE_Breakouts_Main {
 			$reg_limit = !empty( $reg_limit ) ? $reg_limit : 1000;
 		}
 
-		$event_meta[$ref] = isset( $event_meta[$ref] ) ? $event_meta[$ref] - 1 : $reg_limit;
+		$event_meta[$ref] = isset( $event_meta[$ref] ) ? $event_meta[$ref] - 1 : $reg_limit - 1;
 
 		//update event meta for event.
 		$data = array(
@@ -920,6 +924,13 @@ class EE_Breakouts_Main {
 		//we also want to make sure that the original reg_id this attendee represents (for the main event all breakouts are attached to) is saved as an attendee meta for this attendee.
 		if ( !empty($att_id ) ) {
 			require_once( EE_BREAKOUTS_PATH . 'helpers/EE_Data_Retriever.helper.php' );
+			//update reg_group
+			EE_Data_Retriever::save_attendee_meta( $att_id, 'breakout_reg_group', $reg_group );
+			//update reg_id_count
+			$reg_ref = 'brk_id_' . $reg_group;
+			$reg_id_count = (int) get_option( $reg_ref );
+			$new_count = !empty($reg_id_count) ? $reg_id_count + 1 : 1;
+			update_option( $reg_ref, $new_count );
 			EE_Data_Retriever::save_attendee_meta( $att_id, 'breakout_main_registration_id', $this->_session['registration_id'] );
 
 			//let's also update attendee meta with the breakout category id for the event they registered for.
@@ -1243,6 +1254,8 @@ class EE_Breakouts_Main {
 		$route = !$route ? $this->_route : $route;
 		$transient = $notices ? 'n_' . $route . '_' . $this->_session['transient_id'] : 'r_' . $route . '_' . $this->_session['transient_id'];
 		$data = get_transient( $transient );
+		//then let's delete the transient so we don't fill up the database.
+		delete_transient( $transient );
 		return $notices ? $data['notices'] : $data;
 	}
 
@@ -1347,7 +1360,8 @@ class EE_Breakouts_Main {
 	 * @return void
 	 */
 	private function _check_auto_end_session() {
-
+		
+		
 		if ( !isset($_SESSION) ) {
 			session_start();
 			return;
