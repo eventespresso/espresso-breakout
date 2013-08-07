@@ -780,7 +780,8 @@ class EE_Breakouts_Main {
 	private function _send_email( $data ) {
 		global $org_options;
 		$send_to = $data['registration_info']['email_address'];
-		$send_from = isset( $org_options['contact_email'] ) ? $org_options['contact_email'] : get_bloginfo('admin_email');
+		$send_from_name = isset($org_options['organization']) ? $org_options['organization'] : __('Breakout Registrations', 'event_espresso');
+		$send_from = isset( $org_options['contact_email'] ) ? $send_from_name . ' <' . $org_options['contact_email'] . '>' : $send_from_name . ' <' . get_bloginfo('admin_email') . '>';
 
 
 		//setup the content
@@ -814,10 +815,10 @@ class EE_Breakouts_Main {
 
 		//headers
 		$headers = array(
-			'MIME-Version' => '1.0',
-			'From' => $send_from,
-			'Reply-To' => $send_from,
-			'Content-Type' => ' text/plain; charset=utf-8'
+			0 => "MIME-Version:1.0",
+			1 => "From: $send_from",
+			2 => "Reply-To: $send_from",
+			3 => "Content-Type: text/plain; charset=utf-8"
 			);
 
 		$success = wp_mail( $send_to, $subject, $msg, $headers );
