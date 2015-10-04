@@ -1,5 +1,7 @@
 #Espresso Breakouts
 
+> Note: Espresso Breakouts is an add-on for Event Espresso 3 only, it is not compatible with Event Espresso 4
+
 Espresso Breakouts is an addon for Event Espresso makes it possible to have attendees of a main event register for various "breakout" sessions and track accordingly
 
 Note: This was developed initially for a very specific use case and was not intended for wide distribution.  We may or may not do additional development on this so take it as is.
